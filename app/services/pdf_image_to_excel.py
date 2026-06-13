@@ -1,4 +1,4 @@
-from app.services.ocr_extractor import extract_image_metadata
+from app.services.ocr_extractor import extract_image_with_ocr
 from app.services.pdf_table_extractor import (
     extract_tables_with_pymupdf,
     extract_text_lines_from_pdf,
@@ -46,7 +46,7 @@ def extract_from_pdf(file_payload):
 def extract_from_image(file_payload):
     image_bytes = decode_base64_file(file_payload)
 
-    return extract_image_metadata(file_payload, image_bytes)
+    return extract_image_with_ocr(file_payload, image_bytes)
 
 
 def combine_results(results):
