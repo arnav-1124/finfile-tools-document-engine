@@ -1,7 +1,8 @@
-from app.services.ocr_extractor import extract_image_with_ocr
+from app.services.ocr_extractor import extract_image_with_ocr, extract_pil_image_with_ocr
 from app.services.pdf_table_extractor import (
     extract_tables_with_pymupdf,
     extract_text_lines_from_pdf,
+    render_pdf_pages_to_images,
 )
 from app.utils.file_helpers import (
     DEFAULT_PREVIEW_LIMIT,
@@ -9,7 +10,6 @@ from app.utils.file_helpers import (
     decode_base64_file,
     normalize_column_count,
 )
-
 
 def extract_from_pdf(file_payload):
     pdf_bytes = decode_base64_file(file_payload)
@@ -30,16 +30,56 @@ def extract_from_pdf(file_payload):
         )
 
     text_rows, text_warnings = extract_text_lines_from_pdf(pdf_bytes)
-    columns, rows = normalize_column_count(text_rows)
+
+    if text_rows:
+        columns, rows = normalize_column_count(text_rows)
+
+        return create_success_response(
+            extraction_strategy="DIGITAL_PDF_TEXT_LINES",
+            columns=columns or ["Column 1"],
+            rows=rows,
+            total_rows=len(rows),
+            preview_limit=DEFAULT_PREVIEW_LIMIT,
+            warnings=table_warnings + text_warnings,
+            confidence={"overall": 0.62},
+        )
+
+    rendered_pages, render_warnings = render_pdf_pages_to_images(
+        pdf_bytes,
+        max_pages=5,
+        zoom=2,
+    )
+
+    scanned_rows = []
+    scanned_warnings = []
+    confidences = []
+
+    for page in rendered_pages:
+        result = extract_pil_image_with_ocr(
+            page["image"],
+            source_label=f"Page {page['pageNumber']}",
+        )
+
+        scanned_rows.extend(result["rows"])
+        scanned_warnings.extend(result["warnings"])
+
+        if result["confidence"]:
+            confidences.append(result["confidence"])
+
+    columns, rows = normalize_column_count(scanned_rows)
+
+    average_confidence = (
+        round(sum(confidences) / len(confidences), 2) if confidences else 0.0
+    )
 
     return create_success_response(
-        extraction_strategy="DIGITAL_PDF_TEXT_LINES",
-        columns=columns or ["Column 1"],
+        extraction_strategy="SCANNED_PDF_OCR_TEXT_LINES",
+        columns=columns or ["Page", "Extracted text"],
         rows=rows,
         total_rows=len(rows),
         preview_limit=DEFAULT_PREVIEW_LIMIT,
-        warnings=table_warnings + text_warnings,
-        confidence={"overall": 0.62 if rows else 0.0},
+        warnings=table_warnings + text_warnings + render_warnings + scanned_warnings,
+        confidence={"overall": average_confidence},
     )
 
 

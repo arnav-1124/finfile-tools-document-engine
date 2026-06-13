@@ -214,6 +214,38 @@ def extract_image_metadata(file_payload, image_bytes):
         confidence={"overall": 0.2},
     )
 
+def extract_pil_image_with_ocr(image, *, source_label="Page"):
+    best_result = run_best_ocr(image)
+
+    rows = []
+
+    for line in best_result["lines"]:
+        rows.append([source_label, line])
+
+    confidence_decimal = round(best_result["averageConfidence"] / 100, 2)
+
+    warnings = []
+
+    if not rows:
+        warnings.append(
+            f"No readable text was detected from {source_label}."
+        )
+
+    if rows and confidence_decimal < 0.55:
+        warnings.append(
+            f"OCR confidence is low for {source_label}. Please review extracted text carefully."
+        )
+
+    warnings.append(
+        f"OCR strategy for {source_label}: {best_result['variant']} with {best_result['config']}."
+    )
+
+    return {
+        "rows": rows,
+        "warnings": warnings,
+        "confidence": confidence_decimal if rows else 0.0,
+    }
+
 
 def extract_image_with_ocr(file_payload, image_bytes):
     try:

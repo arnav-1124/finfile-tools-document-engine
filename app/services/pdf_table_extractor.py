@@ -1,4 +1,7 @@
+import io
+
 import fitz
+from PIL import Image
 
 from app.utils.file_helpers import normalize_rows
 
@@ -56,3 +59,37 @@ def extract_text_lines_from_pdf(pdf_bytes):
         )
 
     return rows, warnings
+
+
+def render_pdf_pages_to_images(pdf_bytes, *, max_pages=5, zoom=2):
+    document = fitz.open(stream=pdf_bytes, filetype="pdf")
+    images = []
+    warnings = []
+
+    page_count = len(document)
+    pages_to_render = min(page_count, max_pages)
+
+    if page_count > max_pages:
+        warnings.append(
+            f"Only the first {max_pages} pages were rendered for OCR preview. Full scanned-PDF processing will be expanded later."
+        )
+
+    matrix = fitz.Matrix(zoom, zoom)
+
+    for page_index in range(pages_to_render):
+        page = document[page_index]
+        pixmap = page.get_pixmap(matrix=matrix, alpha=False)
+
+        image_bytes = pixmap.tobytes("png")
+        image = Image.open(io.BytesIO(image_bytes))
+
+        images.append(
+            {
+                "pageNumber": page_index + 1,
+                "image": image,
+            }
+        )
+
+    document.close()
+
+    return images, warnings
