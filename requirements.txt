@@ -2,3 +2,5 @@ pymupdf==1.26.6
 Pillow==12.0.0
 pytesseract==0.3.13
 python-dotenv==1.2.1
+paddlepaddle==3.2.2
+paddleocr

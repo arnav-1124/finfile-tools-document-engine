@@ -55,6 +55,7 @@ def create_success_response(
     warnings=None,
     files_processed=1,
     confidence=None,
+    metadata=None,
 ):
     return {
         "success": True,
@@ -66,7 +67,13 @@ def create_success_response(
         "previewLimit": preview_limit,
         "warnings": warnings or [],
         "filesProcessed": files_processed,
-        "confidence": confidence or {"overall": None},
+        "confidence": confidence
+        or {
+            "text": None,
+            "tableStructure": None,
+            "overall": None,
+        },
+        "metadata": metadata or {},
     }
 
 

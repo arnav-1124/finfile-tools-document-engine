@@ -7,6 +7,12 @@ from dotenv import load_dotenv
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
 from app.utils.file_helpers import create_success_response, normalize_column_count
+from app.services.table_reconstructor import reconstruct_table_from_ocr_lines
+
+from app.services.paddle_table_extractor import (
+    extract_with_paddle_from_image_bytes,
+    extract_with_paddle_from_pil_image,
+)
 
 load_dotenv()
 
@@ -41,10 +47,6 @@ def preprocess_image_variants(image):
     autocontrast = ImageOps.autocontrast(enlarged)
 
     return [
-        {
-            "name": "grayscale",
-            "image": grayscale,
-        },
         {
             "name": "contrast_sharpen",
             "image": sharpened,
@@ -110,10 +112,6 @@ def run_best_ocr(image):
             "config": "--oem 3 --psm 6",
         },
         {
-            "name": "psm_4",
-            "config": "--oem 3 --psm 4",
-        },
-        {
             "name": "psm_11",
             "config": "--oem 3 --psm 11",
         },
@@ -156,20 +154,58 @@ def run_best_ocr(image):
     return best_result
 
 
-def lines_to_rows(lines):
-    return [[line] for line in lines]
-
-
 def extract_image_text(file_payload, image_bytes):
+    try:
+        paddle_result = extract_with_paddle_from_image_bytes(image_bytes)
+
+        if paddle_result["rows"]:
+            strategy = (
+                "IMAGE_PADDLE_TABLE_RECONSTRUCTED"
+                if paddle_result["isTableLike"]
+                else "IMAGE_PADDLE_TEXT_LINES"
+            )
+
+            warnings = paddle_result["warnings"]
+
+            if paddle_result["confidence"] < 0.55:
+                warnings.append(
+                    "PaddleOCR confidence is low. Please review extracted text carefully."
+                )
+
+            return create_success_response(
+                extraction_strategy=strategy,
+                columns=paddle_result["columns"] or ["Extracted text"],
+                rows=paddle_result["rows"],
+                total_rows=len(paddle_result["rows"]),
+                warnings=warnings,
+                confidence={
+                    "text": paddle_result["confidence"],
+                    "tableStructure": 0.65 if paddle_result["isTableLike"] else 0.25,
+                    "overall": round(
+                        (paddle_result["confidence"] * 0.65)
+                        + ((0.65 if paddle_result["isTableLike"] else 0.25) * 0.35),
+                        2,
+                    ),
+                },
+            )
+    except Exception as error:
+        paddle_error = str(error)
+    else:
+        paddle_error = "PaddleOCR returned no rows."
+
     image = Image.open(io.BytesIO(image_bytes))
     best_result = run_best_ocr(image)
 
-    rows = lines_to_rows(best_result["lines"])
-    columns, normalized_rows = normalize_column_count(rows)
+    reconstruction = reconstruct_table_from_ocr_lines(best_result["lines"])
+
+    columns = reconstruction["columns"]
+    normalized_rows = reconstruction["rows"]
 
     confidence_decimal = round(best_result["averageConfidence"] / 100, 2)
 
-    warnings = []
+    warnings = [
+        f"PaddleOCR fallback reason: {paddle_error}",
+    ]
 
     if not normalized_rows:
         warnings.append(
@@ -178,20 +214,36 @@ def extract_image_text(file_payload, image_bytes):
 
     if normalized_rows and confidence_decimal < 0.55:
         warnings.append(
-            "OCR confidence is low. Please review the extracted text carefully."
+            "Tesseract OCR confidence is low. Please review the extracted text carefully."
         )
 
     warnings.append(
-        f"OCR strategy used: {best_result['variant']} with {best_result['config']}."
+        f"Tesseract OCR strategy used: {best_result['variant']} with {best_result['config']}."
+    )
+
+    warnings.extend(reconstruction["warnings"])
+
+    strategy = (
+        "IMAGE_TESSERACT_TABLE_RECONSTRUCTED"
+        if reconstruction["isTableLike"]
+        else "IMAGE_TESSERACT_TEXT_LINES"
     )
 
     return create_success_response(
-        extraction_strategy="IMAGE_OCR_TEXT_LINES",
+        extraction_strategy=strategy,
         columns=columns or ["Extracted text"],
         rows=normalized_rows,
         total_rows=len(normalized_rows),
         warnings=warnings,
-        confidence={"overall": confidence_decimal if normalized_rows else 0.0},
+        confidence={
+            "text": confidence_decimal if normalized_rows else 0.0,
+            "tableStructure": 0.65 if reconstruction["isTableLike"] else 0.25,
+            "overall": round(
+                ((confidence_decimal if normalized_rows else 0.0) * 0.65)
+                + ((0.65 if reconstruction["isTableLike"] else 0.25) * 0.35),
+                2,
+            ),
+        },
     )
 
 
@@ -214,36 +266,81 @@ def extract_image_metadata(file_payload, image_bytes):
         confidence={"overall": 0.2},
     )
 
+
 def extract_pil_image_with_ocr(image, *, source_label="Page"):
+    try:
+        paddle_result = extract_with_paddle_from_pil_image(image)
+
+        if paddle_result["rows"]:
+            rows = []
+
+            if paddle_result["isTableLike"]:
+                for row in paddle_result["rows"]:
+                    rows.append([source_label, *row])
+            else:
+                for row in paddle_result["rows"]:
+                    rows.append(
+                        [source_label, *(row if isinstance(row, list) else [row])])
+
+            warnings = [
+                f"PaddleOCR strategy for {source_label}.",
+                *paddle_result["warnings"],
+            ]
+
+            if paddle_result["confidence"] < 0.55:
+                warnings.append(
+                    f"PaddleOCR confidence is low for {source_label}. Please review extracted text carefully."
+                )
+
+            return {
+                "rows": rows,
+                "warnings": warnings,
+                "confidence": paddle_result["confidence"],
+                "isTableLike": paddle_result["isTableLike"],
+            }
+
+    except Exception as error:
+        paddle_error = str(error)
+    else:
+        paddle_error = "PaddleOCR returned no rows."
+
     best_result = run_best_ocr(image)
+    reconstruction = reconstruct_table_from_ocr_lines(best_result["lines"])
 
     rows = []
 
-    for line in best_result["lines"]:
-        rows.append([source_label, line])
+    if reconstruction["isTableLike"]:
+        for row in reconstruction["rows"]:
+            rows.append([source_label, *row])
+    else:
+        for line in best_result["lines"]:
+            rows.append([source_label, line])
 
     confidence_decimal = round(best_result["averageConfidence"] / 100, 2)
 
-    warnings = []
+    warnings = [
+        f"PaddleOCR fallback reason for {source_label}: {paddle_error}",
+    ]
 
     if not rows:
-        warnings.append(
-            f"No readable text was detected from {source_label}."
-        )
+        warnings.append(f"No readable text was detected from {source_label}.")
 
     if rows and confidence_decimal < 0.55:
         warnings.append(
-            f"OCR confidence is low for {source_label}. Please review extracted text carefully."
+            f"Tesseract OCR confidence is low for {source_label}. Please review extracted text carefully."
         )
 
     warnings.append(
-        f"OCR strategy for {source_label}: {best_result['variant']} with {best_result['config']}."
+        f"Tesseract OCR strategy for {source_label}: {best_result['variant']} with {best_result['config']}."
     )
+
+    warnings.extend(reconstruction["warnings"])
 
     return {
         "rows": rows,
         "warnings": warnings,
         "confidence": confidence_decimal if rows else 0.0,
+        "isTableLike": reconstruction["isTableLike"],
     }
 
 

@@ -11,6 +11,7 @@ from app.utils.file_helpers import (
     normalize_column_count,
 )
 
+
 def extract_from_pdf(file_payload):
     pdf_bytes = decode_base64_file(file_payload)
 
@@ -26,7 +27,16 @@ def extract_from_pdf(file_payload):
             total_rows=len(rows),
             preview_limit=DEFAULT_PREVIEW_LIMIT,
             warnings=table_warnings,
-            confidence={"overall": 0.82},
+            confidence={
+                "text": 0.9,
+                "tableStructure": 0.82,
+                "overall": 0.82,
+            },
+            metadata={
+                "sourceType": "digital_pdf",
+                "pagesProcessed": None,
+                "pageLimitApplied": False,
+            },
         )
 
     text_rows, text_warnings = extract_text_lines_from_pdf(pdf_bytes)
@@ -36,23 +46,33 @@ def extract_from_pdf(file_payload):
 
         return create_success_response(
             extraction_strategy="DIGITAL_PDF_TEXT_LINES",
-            columns=columns or ["Column 1"],
+            columns=columns or ["Page", "Extracted text"],
             rows=rows,
             total_rows=len(rows),
             preview_limit=DEFAULT_PREVIEW_LIMIT,
             warnings=table_warnings + text_warnings,
-            confidence={"overall": 0.62},
+            confidence={
+                "text": 0.75,
+                "tableStructure": 0.25,
+                "overall": 0.5,
+            },
+            metadata={
+                "sourceType": "digital_pdf",
+                "pagesProcessed": None,
+                "pageLimitApplied": False,
+            },
         )
 
     rendered_pages, render_warnings = render_pdf_pages_to_images(
         pdf_bytes,
-        max_pages=5,
-        zoom=2,
+        max_pages=2,
+        zoom=1.5,
     )
 
     scanned_rows = []
     scanned_warnings = []
     confidences = []
+    table_like_pages = 0
 
     for page in rendered_pages:
         result = extract_pil_image_with_ocr(
@@ -66,6 +86,9 @@ def extract_from_pdf(file_payload):
         if result["confidence"]:
             confidences.append(result["confidence"])
 
+        if result.get("isTableLike"):
+            table_like_pages += 1
+
     columns, rows = normalize_column_count(scanned_rows)
 
     average_confidence = (
@@ -73,13 +96,31 @@ def extract_from_pdf(file_payload):
     )
 
     return create_success_response(
-        extraction_strategy="SCANNED_PDF_OCR_TEXT_LINES",
+        extraction_strategy=(
+            "SCANNED_PDF_OCR_TABLE_RECONSTRUCTED"
+            if table_like_pages > 0
+            else "SCANNED_PDF_OCR_TEXT_LINES"
+        ),
         columns=columns or ["Page", "Extracted text"],
         rows=rows,
         total_rows=len(rows),
         preview_limit=DEFAULT_PREVIEW_LIMIT,
         warnings=table_warnings + text_warnings + render_warnings + scanned_warnings,
-        confidence={"overall": average_confidence},
+        confidence={
+            "text": average_confidence,
+            "tableStructure": 0.65 if table_like_pages > 0 else 0.25,
+            "overall": round(
+                (average_confidence * 0.65)
+                + ((0.65 if table_like_pages > 0 else 0.25) * 0.35),
+                2,
+            ),
+        },
+        metadata={
+            "sourceType": "scanned_pdf",
+            "pagesProcessed": len(rendered_pages),
+            "pageLimitApplied": len(rendered_pages) >= 2,
+            "tableLikePages": table_like_pages,
+        },
     )
 
 
