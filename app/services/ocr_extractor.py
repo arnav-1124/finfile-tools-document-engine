@@ -1,12 +1,17 @@
 import io
 import os
 import statistics
+import time
 
 import pytesseract
 from dotenv import load_dotenv
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
-from app.utils.file_helpers import create_success_response, normalize_column_count
+from app.utils.file_helpers import (
+    create_success_response,
+    get_elapsed_ms,
+    normalize_column_count,
+)
 from app.services.table_reconstructor import reconstruct_table_from_ocr_lines
 
 from app.services.paddle_table_extractor import (
@@ -155,8 +160,12 @@ def run_best_ocr(image):
 
 
 def extract_image_text(file_payload, image_bytes):
+    image_start_time = time.perf_counter()
+
     try:
+        paddle_start_time = time.perf_counter()
         paddle_result = extract_with_paddle_from_image_bytes(image_bytes)
+        paddle_ms = get_elapsed_ms(paddle_start_time)
 
         if paddle_result["rows"]:
             strategy = (
@@ -172,6 +181,10 @@ def extract_image_text(file_payload, image_bytes):
                     "PaddleOCR confidence is low. Please review extracted text carefully."
                 )
 
+            table_structure_confidence = (
+                0.65 if paddle_result["isTableLike"] else 0.25
+            )
+
             return create_success_response(
                 extraction_strategy=strategy,
                 columns=paddle_result["columns"] or ["Extracted text"],
@@ -180,21 +193,36 @@ def extract_image_text(file_payload, image_bytes):
                 warnings=warnings,
                 confidence={
                     "text": paddle_result["confidence"],
-                    "tableStructure": 0.65 if paddle_result["isTableLike"] else 0.25,
+                    "tableStructure": table_structure_confidence,
                     "overall": round(
                         (paddle_result["confidence"] * 0.65)
-                        + ((0.65 if paddle_result["isTableLike"] else 0.25) * 0.35),
+                        + (table_structure_confidence * 0.35),
                         2,
                     ),
+                },
+                metadata={
+                    "sourceType": "image",
+                    "ocrProvider": "paddleocr",
+                    "isTableLike": paddle_result["isTableLike"],
+                },
+                performance={
+                    "fileMs": get_elapsed_ms(image_start_time),
+                    "paddleMs": paddle_ms,
                 },
             )
     except Exception as error:
         paddle_error = str(error)
+        paddle_ms = None
     else:
         paddle_error = "PaddleOCR returned no rows."
+        paddle_ms = None
+
+    tesseract_start_time = time.perf_counter()
 
     image = Image.open(io.BytesIO(image_bytes))
     best_result = run_best_ocr(image)
+
+    tesseract_ms = get_elapsed_ms(tesseract_start_time)
 
     reconstruction = reconstruct_table_from_ocr_lines(best_result["lines"])
 
@@ -229,6 +257,8 @@ def extract_image_text(file_payload, image_bytes):
         else "IMAGE_TESSERACT_TEXT_LINES"
     )
 
+    table_structure_confidence = 0.65 if reconstruction["isTableLike"] else 0.25
+
     return create_success_response(
         extraction_strategy=strategy,
         columns=columns or ["Extracted text"],
@@ -237,12 +267,22 @@ def extract_image_text(file_payload, image_bytes):
         warnings=warnings,
         confidence={
             "text": confidence_decimal if normalized_rows else 0.0,
-            "tableStructure": 0.65 if reconstruction["isTableLike"] else 0.25,
+            "tableStructure": table_structure_confidence,
             "overall": round(
                 ((confidence_decimal if normalized_rows else 0.0) * 0.65)
-                + ((0.65 if reconstruction["isTableLike"] else 0.25) * 0.35),
+                + (table_structure_confidence * 0.35),
                 2,
             ),
+        },
+        metadata={
+            "sourceType": "image",
+            "ocrProvider": "tesseract",
+            "isTableLike": reconstruction["isTableLike"],
+        },
+        performance={
+            "fileMs": get_elapsed_ms(image_start_time),
+            "paddleMs": paddle_ms,
+            "tesseractMs": tesseract_ms,
         },
     )
 

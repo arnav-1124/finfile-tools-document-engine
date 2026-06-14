@@ -1,4 +1,5 @@
 import base64
+import time
 
 
 ENGINE_VERSION = "0.1.0"
@@ -45,6 +46,10 @@ def normalize_column_count(rows):
     return columns, normalized_rows
 
 
+def get_elapsed_ms(start_time):
+    return round((time.perf_counter() - start_time) * 1000)
+
+
 def create_success_response(
     *,
     extraction_strategy,
@@ -56,6 +61,7 @@ def create_success_response(
     files_processed=1,
     confidence=None,
     metadata=None,
+    performance=None,
 ):
     return {
         "success": True,
@@ -74,6 +80,7 @@ def create_success_response(
             "overall": None,
         },
         "metadata": metadata or {},
+        "performance": performance or {},
     }
 
 
