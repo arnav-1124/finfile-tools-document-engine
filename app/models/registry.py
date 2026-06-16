@@ -1,3 +1,6 @@
+from app.models.paddle_ocr import PaddleOcrModel
+
+
 class ParserMode:
     FAST_TEXT = "FAST_TEXT"
     OCR_TEXT = "OCR_TEXT"
@@ -22,6 +25,19 @@ class ModelRegistry:
 
     def get_model(self, model_name):
         return self._models.get(model_name)
+
+    def get_paddle_ocr_model(self, language="en"):
+        model_name = f"paddle_ocr_text_{language}"
+
+        existing_model = self.get_model(model_name)
+
+        if existing_model:
+            return existing_model
+
+        model = PaddleOcrModel(language=language)
+        model.load()
+
+        return self.register_model(model_name, model)
 
     def warmup(self):
         return {
