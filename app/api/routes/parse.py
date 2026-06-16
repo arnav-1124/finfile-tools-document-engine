@@ -4,7 +4,9 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.core.errors import create_engine_error_response
+
 from app.parsers.fast_text_parser import FastTextParser
+from app.parsers.ocr_text_parser import OcrTextParser
 
 
 router = APIRouter(prefix="/v1/parse", tags=["parse"])
@@ -22,10 +24,14 @@ def parse_sync(payload: ParsePayload):
         data: Dict[str, Any] = payload.model_dump()
         parser_mode = data.get("parserMode") or "FAST_TEXT"
 
-        if parser_mode != "FAST_TEXT":
+        if parser_mode == "FAST_TEXT":
+            parser = FastTextParser()
+
+        elif parser_mode == "OCR_TEXT":
+            parser = OcrTextParser()
+        else:
             raise ValueError(f"Unsupported parser mode: {parser_mode}")
 
-        parser = FastTextParser()
         return parser.parse(data)
 
     except Exception as error:

@@ -29,10 +29,15 @@ class PaddleOcrModel:
     def predict(self, image_path_or_array):
         ocr = self.load()
 
-        if hasattr(ocr, "ocr"):
-            return ocr.ocr(image_path_or_array, cls=True)
-
+        # New PaddleOCR interface
         if hasattr(ocr, "predict"):
             return ocr.predict(image_path_or_array)
+
+        # Older PaddleOCR interface
+        if hasattr(ocr, "ocr"):
+            try:
+                return ocr.ocr(image_path_or_array, cls=True)
+            except TypeError:
+                return ocr.ocr(image_path_or_array)
 
         raise RuntimeError("Unsupported PaddleOCR runtime interface.")
