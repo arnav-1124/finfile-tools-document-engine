@@ -7,6 +7,7 @@ from app.core.errors import create_engine_error_response
 
 from app.parsers.fast_text_parser import FastTextParser
 from app.parsers.ocr_text_parser import OcrTextParser
+from app.parsers.auto_parser import AutoParser
 
 
 router = APIRouter(prefix="/v1/parse", tags=["parse"])
@@ -26,9 +27,10 @@ def parse_sync(payload: ParsePayload):
 
         if parser_mode == "FAST_TEXT":
             parser = FastTextParser()
-
         elif parser_mode == "OCR_TEXT":
             parser = OcrTextParser()
+        elif parser_mode == "AUTO":
+            parser = AutoParser()
         else:
             raise ValueError(f"Unsupported parser mode: {parser_mode}")
 
