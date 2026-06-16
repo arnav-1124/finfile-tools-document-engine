@@ -7,6 +7,7 @@ from app.models.registry import model_registry
 from app.normalizers.parser_output import create_parser_output
 from app.normalizers.text_blocks import create_text_block
 from app.parsers.base import BaseParser
+from app.preprocessors.pdf_renderer import render_pdf_pages_to_images
 
 
 SUPPORTED_IMAGE_MIME_TYPES = {
@@ -49,12 +50,6 @@ def extract_text_items_from_paddle_result(result):
             if not page_result:
                 continue
 
-            # New PaddleOCR result format:
-            # {
-            #   "rec_texts": [...],
-            #   "rec_scores": [...],
-            #   "rec_polys": [...]
-            # }
             if isinstance(page_result, dict):
                 rec_texts = page_result.get("rec_texts") or []
                 rec_scores = page_result.get("rec_scores") or []
@@ -92,11 +87,6 @@ def extract_text_items_from_paddle_result(result):
 
                 continue
 
-            # Older PaddleOCR result format:
-            # [
-            #   [bbox, ("text", confidence)],
-            #   ...
-            # ]
             if isinstance(page_result, list):
                 for item in page_result:
                     if not item or len(item) < 2:
@@ -124,6 +114,22 @@ def extract_text_items_from_paddle_result(result):
     return text_items
 
 
+def run_paddle_ocr_on_image(model, image_path, page_number):
+    raw_result = model.predict(str(image_path))
+    text_items = extract_text_items_from_paddle_result(raw_result)
+
+    return [
+        create_text_block(
+            text=item["text"],
+            page_number=page_number,
+            confidence=item.get("confidence"),
+            bbox=item.get("bbox"),
+            block_type="text",
+        )
+        for item in text_items
+    ]
+
+
 class OcrTextParser(BaseParser):
     parser_mode = "OCR_TEXT"
 
@@ -131,8 +137,7 @@ class OcrTextParser(BaseParser):
         files = payload.get("files") or []
 
         if not files:
-            raise ValueError(
-                "At least one image file is required for OCR parsing.")
+            raise ValueError("At least one file is required for OCR parsing.")
 
         file_payload = files[0]
         content_base64 = file_payload.get("contentBase64")
@@ -141,32 +146,47 @@ class OcrTextParser(BaseParser):
         if not content_base64:
             raise ValueError("File content is missing.")
 
-        if mime_type not in SUPPORTED_IMAGE_MIME_TYPES:
-            raise ValueError(
-                "OCR_TEXT currently supports PNG, JPG, JPEG, and WebP images.")
-
         file_bytes = base64.b64decode(content_base64)
-        suffix = SUPPORTED_IMAGE_MIME_TYPES[mime_type]
+        model = model_registry.get_paddle_ocr_model(language="en")
 
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir) / f"ocr-input{suffix}"
-            temp_path.write_bytes(file_bytes)
+        text_blocks = []
+        page_count = 1
 
-            model = model_registry.get_paddle_ocr_model(language="en")
-            raw_result = model.predict(str(temp_path))
+        if mime_type in SUPPORTED_IMAGE_MIME_TYPES:
+            suffix = SUPPORTED_IMAGE_MIME_TYPES[mime_type]
 
-        text_items = extract_text_items_from_paddle_result(raw_result)
+            with tempfile.TemporaryDirectory() as temp_dir:
+                temp_path = Path(temp_dir) / f"ocr-input{suffix}"
+                temp_path.write_bytes(file_bytes)
 
-        text_blocks = [
-            create_text_block(
-                text=item["text"],
-                page_number=1,
-                confidence=item.get("confidence"),
-                bbox=item.get("bbox"),
-                block_type="text",
+                text_blocks.extend(
+                    run_paddle_ocr_on_image(
+                        model=model,
+                        image_path=temp_path,
+                        page_number=1,
+                    )
+                )
+
+        elif mime_type == "application/pdf":
+            rendered_pdf = render_pdf_pages_to_images(file_bytes)
+            page_count = rendered_pdf["pageCount"]
+
+            try:
+                for page in rendered_pdf["pages"]:
+                    text_blocks.extend(
+                        run_paddle_ocr_on_image(
+                            model=model,
+                            image_path=page["imagePath"],
+                            page_number=page["pageNumber"],
+                        )
+                    )
+            finally:
+                rendered_pdf["tempDir"].cleanup()
+
+        else:
+            raise ValueError(
+                "OCR_TEXT currently supports PDF, PNG, JPG, JPEG, and WebP files."
             )
-            for item in text_items
-        ]
 
         plain_text = "\n".join(block["text"] for block in text_blocks)
 
@@ -189,7 +209,7 @@ class OcrTextParser(BaseParser):
             document={
                 "originalName": file_payload.get("originalName"),
                 "mimeType": mime_type,
-                "pageCount": 1,
+                "pageCount": page_count,
                 "isScanned": True,
             },
             outputs={
