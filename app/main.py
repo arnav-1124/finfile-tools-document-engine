@@ -10,8 +10,11 @@ from app.services.pdf_image_to_excel import extract_pdf_image_to_excel
 from app.utils.file_helpers import create_error_response
 from app.services.pdf_to_images import convert_pdf_to_images
 
+from app.api.routes.parse import router as parse_router
+
 
 app = FastAPI(title="FinFile Document Engine", version="0.1.0")
+app.include_router(parse_router)
 
 
 class EnginePayload(BaseModel):

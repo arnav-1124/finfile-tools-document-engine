@@ -6,3 +6,4 @@ paddlepaddle==3.2.2
 paddleocr
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
+requests==2.34.2
