@@ -44,9 +44,10 @@ class FastTextParser(BaseParser):
             pdf_start_time = time.perf_counter()
 
             pdf_document = fitz.open(stream=file_bytes, filetype="pdf")
-            page_count = pdf_document.page_count
 
             try:
+                page_count = pdf_document.page_count
+
                 for page_index in range(page_count):
                     page = pdf_document.load_page(page_index)
                     page_text = page.get_text("text") or ""
