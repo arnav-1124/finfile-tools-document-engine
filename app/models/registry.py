@@ -16,6 +16,9 @@ class ModelRegistry:
     def get_loaded_models(self):
         return sorted(self._models.keys())
 
+    def get_model_count(self):
+        return len(self._models)
+
     def is_model_loaded(self, model_name):
         return model_name in self._models
 
@@ -42,22 +45,32 @@ class ModelRegistry:
 
         return self.register_model(model_name, model)
 
-    def get_model_status(self):
+    def get_status(self):
         return {
+            "success": True,
+            "modelCount": self.get_model_count(),
             "loadedModels": self.get_loaded_models(),
-            "modelCount": len(self._models),
         }
 
-    def warmup(self, language="en"):
+    def warmup_paddle_ocr(self, language="en"):
+        model_name = self.get_paddle_ocr_model_name(language=language)
+        was_loaded = self.is_model_loaded(model_name)
+
         model = self.get_paddle_ocr_model(language=language)
 
         return {
             "success": True,
-            "message": "Model registry is warmed up.",
-            "loadedModels": self.get_loaded_models(),
-            "warmedModel": model.model_name,
+            "message": "PaddleOCR model is ready.",
+            "provider": "paddleocr",
+            "modelName": model_name,
             "language": language,
+            "modelStatus": "warm" if was_loaded else "cold_start_loaded",
+            "loadedModels": self.get_loaded_models(),
+            "modelCount": self.get_model_count(),
         }
+
+    def warmup(self, language="en"):
+        return self.warmup_paddle_ocr(language=language)
 
 
 model_registry = ModelRegistry()
