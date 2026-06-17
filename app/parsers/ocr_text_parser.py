@@ -9,6 +9,7 @@ from app.normalizers.parser_output import create_parser_output
 from app.normalizers.text_blocks import create_text_block
 from app.parsers.base import BaseParser
 from app.preprocessors.pdf_renderer import render_pdf_pages_to_images
+from app.preprocessors.ocr_image_optimizer import optimize_image_for_ocr
 
 
 SUPPORTED_IMAGE_MIME_TYPES = {
@@ -119,10 +120,17 @@ def extract_text_items_from_paddle_result(result):
     return text_items
 
 
-def run_paddle_ocr_on_image(model, image_path, page_number):
+def run_paddle_ocr_on_image(model, image_path, page_number, quality_mode="BALANCED"):
     page_start_time = time.perf_counter()
 
-    raw_result = model.predict(str(image_path))
+    optimization_start_time = time.perf_counter()
+    optimized_image = optimize_image_for_ocr(
+        image_path=image_path,
+        quality_mode=quality_mode,
+    )
+    optimization_ms = get_elapsed_ms(optimization_start_time)
+
+    raw_result = model.predict(optimized_image["imagePath"])
     text_items = extract_text_items_from_paddle_result(raw_result)
 
     text_blocks = [
@@ -154,6 +162,8 @@ def run_paddle_ocr_on_image(model, image_path, page_number):
         "textBlockCount": len(text_blocks),
         "averageConfidence": average_confidence,
         "ocrMs": get_elapsed_ms(page_start_time),
+        "optimizationMs": optimization_ms,
+        "imageOptimization": optimized_image,
     }
 
 
@@ -213,6 +223,7 @@ class OcrTextParser(BaseParser):
                     model=model,
                     image_path=temp_path,
                     page_number=1,
+                    quality_mode=quality_mode,
                 )
 
                 text_blocks.extend(page_result["textBlocks"])
@@ -222,6 +233,8 @@ class OcrTextParser(BaseParser):
                         "ocrMs": page_result["ocrMs"],
                         "textBlockCount": page_result["textBlockCount"],
                         "averageConfidence": page_result["averageConfidence"],
+                        "optimizationMs": page_result["optimizationMs"],
+                        "imageOptimization": page_result["imageOptimization"],
                     }
                 )
 
@@ -239,6 +252,7 @@ class OcrTextParser(BaseParser):
                         model=model,
                         image_path=page["imagePath"],
                         page_number=page["pageNumber"],
+                        quality_mode=quality_mode,
                     )
 
                     text_blocks.extend(page_result["textBlocks"])
@@ -248,6 +262,8 @@ class OcrTextParser(BaseParser):
                             "ocrMs": page_result["ocrMs"],
                             "textBlockCount": page_result["textBlockCount"],
                             "averageConfidence": page_result["averageConfidence"],
+                            "optimizationMs": page_result["optimizationMs"],
+                            "imageOptimization": page_result["imageOptimization"],
                         }
                     )
             finally:
