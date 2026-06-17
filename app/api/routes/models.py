@@ -3,7 +3,7 @@ import time
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from app.core.config import DEFAULT_OCR_LANGUAGE
+from app.core.config import DEFAULT_OCR_LANGUAGE, DEFAULT_OCR_QUALITY_MODE, normalize_ocr_quality_mode
 from app.models.registry import model_registry
 
 
@@ -12,6 +12,7 @@ router = APIRouter(prefix="/v1/models", tags=["models"])
 
 class WarmupPayload(BaseModel):
     language: str | None = None
+    qualityMode: str | None = None
 
 
 def get_elapsed_ms(start_time):
@@ -32,11 +33,18 @@ def warmup_models(payload: WarmupPayload | None = None):
     start_time = time.perf_counter()
 
     language = DEFAULT_OCR_LANGUAGE
+    quality_mode = DEFAULT_OCR_QUALITY_MODE
 
     if payload and payload.language:
         language = payload.language
 
-    warmup_result = model_registry.warmup(language=language)
+    if payload and payload.qualityMode:
+        quality_mode = normalize_ocr_quality_mode(payload.qualityMode)
+
+    warmup_result = model_registry.warmup(
+        language=language,
+        quality_mode=quality_mode,
+    )
 
     return {
         "success": True,

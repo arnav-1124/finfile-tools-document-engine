@@ -1,3 +1,4 @@
+from app.core.config import DEFAULT_OCR_LANGUAGE, DEFAULT_OCR_QUALITY_MODE, normalize_ocr_quality_mode
 from app.models.paddle_ocr import PaddleOcrModel
 
 
@@ -29,18 +30,26 @@ class ModelRegistry:
     def get_model(self, model_name):
         return self._models.get(model_name)
 
-    def get_paddle_ocr_model_name(self, language="en"):
-        return f"paddle_ocr_text_{language}"
+    def get_paddle_ocr_model_name(self, language=DEFAULT_OCR_LANGUAGE, quality_mode=DEFAULT_OCR_QUALITY_MODE):
+        normalized_quality_mode = normalize_ocr_quality_mode(quality_mode)
+        return f"paddle_ocr_text_{language}_{normalized_quality_mode.lower()}"
 
-    def get_paddle_ocr_model(self, language="en"):
-        model_name = self.get_paddle_ocr_model_name(language=language)
+    def get_paddle_ocr_model(self, language=DEFAULT_OCR_LANGUAGE, quality_mode=DEFAULT_OCR_QUALITY_MODE):
+        normalized_quality_mode = normalize_ocr_quality_mode(quality_mode)
+        model_name = self.get_paddle_ocr_model_name(
+            language=language,
+            quality_mode=normalized_quality_mode,
+        )
 
         existing_model = self.get_model(model_name)
 
         if existing_model:
             return existing_model
 
-        model = PaddleOcrModel(language=language)
+        model = PaddleOcrModel(
+            language=language,
+            quality_mode=normalized_quality_mode,
+        )
         model.load()
 
         return self.register_model(model_name, model)
@@ -52,11 +61,18 @@ class ModelRegistry:
             "loadedModels": self.get_loaded_models(),
         }
 
-    def warmup_paddle_ocr(self, language="en"):
-        model_name = self.get_paddle_ocr_model_name(language=language)
+    def warmup_paddle_ocr(self, language=DEFAULT_OCR_LANGUAGE, quality_mode=DEFAULT_OCR_QUALITY_MODE):
+        normalized_quality_mode = normalize_ocr_quality_mode(quality_mode)
+        model_name = self.get_paddle_ocr_model_name(
+            language=language,
+            quality_mode=normalized_quality_mode,
+        )
         was_loaded = self.is_model_loaded(model_name)
 
-        model = self.get_paddle_ocr_model(language=language)
+        self.get_paddle_ocr_model(
+            language=language,
+            quality_mode=normalized_quality_mode,
+        )
 
         return {
             "success": True,
@@ -64,13 +80,17 @@ class ModelRegistry:
             "provider": "paddleocr",
             "modelName": model_name,
             "language": language,
+            "qualityMode": normalized_quality_mode,
             "modelStatus": "warm" if was_loaded else "cold_start_loaded",
             "loadedModels": self.get_loaded_models(),
             "modelCount": self.get_model_count(),
         }
 
-    def warmup(self, language="en"):
-        return self.warmup_paddle_ocr(language=language)
+    def warmup(self, language=DEFAULT_OCR_LANGUAGE, quality_mode=DEFAULT_OCR_QUALITY_MODE):
+        return self.warmup_paddle_ocr(
+            language=language,
+            quality_mode=quality_mode,
+        )
 
 
 model_registry = ModelRegistry()

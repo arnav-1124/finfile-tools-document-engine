@@ -179,13 +179,20 @@ class OcrTextParser(BaseParser):
         file_bytes = base64.b64decode(content_base64)
         decode_ms = get_elapsed_ms(decode_start_time)
 
+        quality_mode = payload.get("qualityMode") or "BALANCED"
         language = payload.get("language") or "en"
+
         model_name = model_registry.get_paddle_ocr_model_name(
-            language=language)
+            language=language,
+            quality_mode=quality_mode,
+        )
         was_model_loaded = model_registry.is_model_loaded(model_name)
 
         model_load_start_time = time.perf_counter()
-        model = model_registry.get_paddle_ocr_model(language=language)
+        model = model_registry.get_paddle_ocr_model(
+            language=language,
+            quality_mode=quality_mode,
+        )
         model_load_ms = get_elapsed_ms(model_load_start_time)
 
         text_blocks = []
@@ -307,7 +314,7 @@ class OcrTextParser(BaseParser):
                 "provider": "paddleocr",
                 "parser": self.parser_mode,
                 "strategy": "ocr_text_blocks",
-                "qualityMode": "balanced",
+                "qualityMode": quality_mode,
                 "language": language,
                 "modelName": model_name,
                 "modelStatus": "warm" if was_model_loaded else "cold_start",
