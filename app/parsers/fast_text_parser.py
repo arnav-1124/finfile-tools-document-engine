@@ -1,4 +1,6 @@
 import base64
+import time
+
 import fitz
 
 from app.jobs.job_status import JobStatus
@@ -7,10 +9,16 @@ from app.normalizers.text_blocks import normalize_text_lines
 from app.parsers.base import BaseParser
 
 
+def get_elapsed_ms(start_time):
+    return int((time.perf_counter() - start_time) * 1000)
+
+
 class FastTextParser(BaseParser):
     parser_mode = "FAST_TEXT"
 
     def parse(self, payload):
+        parser_start_time = time.perf_counter()
+
         files = payload.get("files") or []
 
         if not files:
@@ -22,36 +30,46 @@ class FastTextParser(BaseParser):
         if not content_base64:
             raise ValueError("File content is missing.")
 
+        decode_start_time = time.perf_counter()
         file_bytes = base64.b64decode(content_base64)
+        decode_ms = get_elapsed_ms(decode_start_time)
+
         mime_type = file_payload.get("mimeType")
 
         text_lines = []
         page_count = 1
+        pdf_extract_ms = 0
 
         if mime_type == "application/pdf":
+            pdf_start_time = time.perf_counter()
+
             pdf_document = fitz.open(stream=file_bytes, filetype="pdf")
             page_count = pdf_document.page_count
 
-            for page_index in range(page_count):
-                page = pdf_document.load_page(page_index)
-                page_text = page.get_text("text") or ""
+            try:
+                for page_index in range(page_count):
+                    page = pdf_document.load_page(page_index)
+                    page_text = page.get_text("text") or ""
 
-                for line in page_text.splitlines():
-                    clean_line = line.strip()
+                    for line in page_text.splitlines():
+                        clean_line = line.strip()
 
-                    if clean_line:
-                        text_lines.append(
-                            {
-                                "text": clean_line,
-                                "pageNumber": page_index + 1,
-                            }
-                        )
+                        if clean_line:
+                            text_lines.append(
+                                {
+                                    "text": clean_line,
+                                    "pageNumber": page_index + 1,
+                                }
+                            )
+            finally:
+                pdf_document.close()
 
-            pdf_document.close()
+            pdf_extract_ms = get_elapsed_ms(pdf_start_time)
         else:
             raise ValueError("FAST_TEXT currently supports digital PDFs only.")
 
         text_blocks = normalize_text_lines(text_lines)
+        plain_text = "\n".join(block["text"] for block in text_blocks)
 
         return create_parser_output(
             job_id=payload.get("jobId") or "sync_parse",
@@ -60,20 +78,35 @@ class FastTextParser(BaseParser):
             document={
                 "originalName": file_payload.get("originalName"),
                 "mimeType": mime_type,
+                "sizeBytes": file_payload.get("sizeBytes"),
                 "pageCount": page_count,
                 "isScanned": len(text_blocks) == 0,
+                "textBlockCount": len(text_blocks),
             },
             outputs={
                 "textBlocks": text_blocks,
-                "plainText": "\n".join(block["text"] for block in text_blocks),
+                "plainText": plain_text,
                 "tables": [],
-                "markdown": "\n".join(block["text"] for block in text_blocks),
+                "markdown": plain_text,
                 "json": {
                     "textBlocks": text_blocks,
                 },
             },
             confidence={
                 "overall": 1 if text_blocks else 0,
+                "text": 1 if text_blocks else 0,
             },
             warnings=[] if text_blocks else ["No embedded text was found."],
+            engine={
+                "provider": "pymupdf",
+                "parser": self.parser_mode,
+                "strategy": "embedded_pdf_text",
+                "qualityMode": "fast",
+            },
+            performance={
+                "totalMs": get_elapsed_ms(parser_start_time),
+                "decodeMs": decode_ms,
+                "pdfExtractMs": pdf_extract_ms,
+                "pagesProcessed": page_count,
+            },
         )

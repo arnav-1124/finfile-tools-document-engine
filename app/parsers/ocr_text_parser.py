@@ -1,5 +1,6 @@
 import base64
 import tempfile
+import time
 from pathlib import Path
 
 from app.jobs.job_status import JobStatus
@@ -16,6 +17,10 @@ SUPPORTED_IMAGE_MIME_TYPES = {
     "image/jpg": ".jpg",
     "image/webp": ".webp",
 }
+
+
+def get_elapsed_ms(start_time):
+    return int((time.perf_counter() - start_time) * 1000)
 
 
 def convert_bbox_to_list(bbox):
@@ -115,10 +120,12 @@ def extract_text_items_from_paddle_result(result):
 
 
 def run_paddle_ocr_on_image(model, image_path, page_number):
+    page_start_time = time.perf_counter()
+
     raw_result = model.predict(str(image_path))
     text_items = extract_text_items_from_paddle_result(raw_result)
 
-    return [
+    text_blocks = [
         create_text_block(
             text=item["text"],
             page_number=page_number,
@@ -129,11 +136,33 @@ def run_paddle_ocr_on_image(model, image_path, page_number):
         for item in text_items
     ]
 
+    confidence_values = [
+        block["confidence"]
+        for block in text_blocks
+        if block.get("confidence") is not None
+    ]
+
+    average_confidence = (
+        sum(confidence_values) / len(confidence_values)
+        if confidence_values
+        else 0
+    )
+
+    return {
+        "pageNumber": page_number,
+        "textBlocks": text_blocks,
+        "textBlockCount": len(text_blocks),
+        "averageConfidence": average_confidence,
+        "ocrMs": get_elapsed_ms(page_start_time),
+    }
+
 
 class OcrTextParser(BaseParser):
     parser_mode = "OCR_TEXT"
 
     def parse(self, payload):
+        parser_start_time = time.perf_counter()
+
         files = payload.get("files") or []
 
         if not files:
@@ -146,39 +175,73 @@ class OcrTextParser(BaseParser):
         if not content_base64:
             raise ValueError("File content is missing.")
 
+        decode_start_time = time.perf_counter()
         file_bytes = base64.b64decode(content_base64)
-        model = model_registry.get_paddle_ocr_model(language="en")
+        decode_ms = get_elapsed_ms(decode_start_time)
+
+        language = payload.get("language") or "en"
+        model_name = model_registry.get_paddle_ocr_model_name(
+            language=language)
+        was_model_loaded = model_registry.is_model_loaded(model_name)
+
+        model_load_start_time = time.perf_counter()
+        model = model_registry.get_paddle_ocr_model(language=language)
+        model_load_ms = get_elapsed_ms(model_load_start_time)
 
         text_blocks = []
         page_count = 1
+        page_performance = []
+        render_ms = 0
+        source_type = "unknown"
 
         if mime_type in SUPPORTED_IMAGE_MIME_TYPES:
+            source_type = "image"
             suffix = SUPPORTED_IMAGE_MIME_TYPES[mime_type]
 
             with tempfile.TemporaryDirectory() as temp_dir:
                 temp_path = Path(temp_dir) / f"ocr-input{suffix}"
                 temp_path.write_bytes(file_bytes)
 
-                text_blocks.extend(
-                    run_paddle_ocr_on_image(
-                        model=model,
-                        image_path=temp_path,
-                        page_number=1,
-                    )
+                page_result = run_paddle_ocr_on_image(
+                    model=model,
+                    image_path=temp_path,
+                    page_number=1,
+                )
+
+                text_blocks.extend(page_result["textBlocks"])
+                page_performance.append(
+                    {
+                        "pageNumber": page_result["pageNumber"],
+                        "ocrMs": page_result["ocrMs"],
+                        "textBlockCount": page_result["textBlockCount"],
+                        "averageConfidence": page_result["averageConfidence"],
+                    }
                 )
 
         elif mime_type == "application/pdf":
+            source_type = "scanned_pdf"
+
+            render_start_time = time.perf_counter()
             rendered_pdf = render_pdf_pages_to_images(file_bytes)
+            render_ms = get_elapsed_ms(render_start_time)
             page_count = rendered_pdf["pageCount"]
 
             try:
                 for page in rendered_pdf["pages"]:
-                    text_blocks.extend(
-                        run_paddle_ocr_on_image(
-                            model=model,
-                            image_path=page["imagePath"],
-                            page_number=page["pageNumber"],
-                        )
+                    page_result = run_paddle_ocr_on_image(
+                        model=model,
+                        image_path=page["imagePath"],
+                        page_number=page["pageNumber"],
+                    )
+
+                    text_blocks.extend(page_result["textBlocks"])
+                    page_performance.append(
+                        {
+                            "pageNumber": page_result["pageNumber"],
+                            "ocrMs": page_result["ocrMs"],
+                            "textBlockCount": page_result["textBlockCount"],
+                            "averageConfidence": page_result["averageConfidence"],
+                        }
                     )
             finally:
                 rendered_pdf["tempDir"].cleanup()
@@ -202,6 +265,16 @@ class OcrTextParser(BaseParser):
             else 0
         )
 
+        warnings = []
+
+        if not text_blocks:
+            warnings.append("No OCR text was detected.")
+
+        if text_blocks and overall_confidence < 0.55:
+            warnings.append(
+                "OCR confidence is low. Please review the extracted text carefully."
+            )
+
         return create_parser_output(
             job_id=payload.get("jobId") or "sync_ocr_text",
             parser_mode=self.parser_mode,
@@ -209,8 +282,11 @@ class OcrTextParser(BaseParser):
             document={
                 "originalName": file_payload.get("originalName"),
                 "mimeType": mime_type,
+                "sizeBytes": file_payload.get("sizeBytes"),
                 "pageCount": page_count,
                 "isScanned": True,
+                "sourceType": source_type,
+                "textBlockCount": len(text_blocks),
             },
             outputs={
                 "textBlocks": text_blocks,
@@ -219,10 +295,30 @@ class OcrTextParser(BaseParser):
                 "markdown": plain_text,
                 "json": {
                     "textBlocks": text_blocks,
+                    "pagePerformance": page_performance,
                 },
             },
             confidence={
                 "overall": overall_confidence,
+                "text": overall_confidence,
             },
-            warnings=[] if text_blocks else ["No OCR text was detected."],
+            warnings=warnings,
+            engine={
+                "provider": "paddleocr",
+                "parser": self.parser_mode,
+                "strategy": "ocr_text_blocks",
+                "qualityMode": "balanced",
+                "language": language,
+                "modelName": model_name,
+                "modelStatus": "warm" if was_model_loaded else "cold_start",
+                "loadedModels": model_registry.get_loaded_models(),
+            },
+            performance={
+                "totalMs": get_elapsed_ms(parser_start_time),
+                "decodeMs": decode_ms,
+                "modelLoadMs": model_load_ms,
+                "renderMs": render_ms,
+                "pagesProcessed": page_count,
+                "pagePerformance": page_performance,
+            },
         )

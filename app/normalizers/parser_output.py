@@ -6,6 +6,8 @@ def create_parser_output(
     outputs,
     confidence=None,
     warnings=None,
+    engine=None,
+    performance=None,
 ):
     return {
         "success": True,
@@ -16,4 +18,6 @@ def create_parser_output(
         "outputs": outputs,
         "confidence": confidence or {},
         "warnings": warnings or [],
+        "engine": engine or {},
+        "performance": performance or {},
     }

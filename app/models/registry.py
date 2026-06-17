@@ -26,8 +26,11 @@ class ModelRegistry:
     def get_model(self, model_name):
         return self._models.get(model_name)
 
+    def get_paddle_ocr_model_name(self, language="en"):
+        return f"paddle_ocr_text_{language}"
+
     def get_paddle_ocr_model(self, language="en"):
-        model_name = f"paddle_ocr_text_{language}"
+        model_name = self.get_paddle_ocr_model_name(language=language)
 
         existing_model = self.get_model(model_name)
 
@@ -39,11 +42,21 @@ class ModelRegistry:
 
         return self.register_model(model_name, model)
 
-    def warmup(self):
+    def get_model_status(self):
+        return {
+            "loadedModels": self.get_loaded_models(),
+            "modelCount": len(self._models),
+        }
+
+    def warmup(self, language="en"):
+        model = self.get_paddle_ocr_model(language=language)
+
         return {
             "success": True,
-            "message": "Model registry is ready.",
+            "message": "Model registry is warmed up.",
             "loadedModels": self.get_loaded_models(),
+            "warmedModel": model.model_name,
+            "language": language,
         }
 
 
