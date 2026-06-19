@@ -131,12 +131,20 @@ class DocumentParseParser(BaseParser):
                 "pageCount": page_count,
                 "isScanned": True,
                 "sourceType": "document_parse",
-                "textBlockCount": 0,
+                "textBlockCount": len(
+                    [
+                        block
+                        for block in normalized_outputs.get("documentBlocks", [])
+                        if block.get("type") == "text"
+                    ]
+                ),
                 "tableCount": len(normalized_outputs["tables"]),
             },
             outputs={
                 "textBlocks": [],
                 "plainText": normalized_outputs["plainText"],
+                "structuredContent": normalized_outputs["structuredContent"],
+                "documentBlocks": normalized_outputs["documentBlocks"],
                 "tables": normalized_outputs["tables"],
                 "markdown": normalized_outputs["markdown"],
                 "json": normalized_outputs["json"],
