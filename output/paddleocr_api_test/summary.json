@@ -1,0 +1,48 @@
+{
+  "pageCount": 3,
+  "pages": [
+    {
+      "lineNumber": 1,
+      "pageIndex": 1,
+      "hasMarkdown": true,
+      "markdownLength": 6710,
+      "imageCount": 0,
+      "outputImageCount": 1,
+      "keys": [
+        "prunedResult",
+        "markdown",
+        "outputImages",
+        "inputImage"
+      ]
+    },
+    {
+      "lineNumber": 1,
+      "pageIndex": 2,
+      "hasMarkdown": true,
+      "markdownLength": 4484,
+      "imageCount": 0,
+      "outputImageCount": 1,
+      "keys": [
+        "prunedResult",
+        "markdown",
+        "outputImages",
+        "inputImage"
+      ]
+    },
+    {
+      "lineNumber": 1,
+      "pageIndex": 3,
+      "hasMarkdown": true,
+      "markdownLength": 828,
+      "imageCount": 0,
+      "outputImageCount": 1,
+      "keys": [
+        "prunedResult",
+        "markdown",
+        "outputImages",
+        "inputImage"
+      ]
+    }
+  ],
+  "combinedMarkdownLength": 12036
+}
