@@ -1,5 +1,9 @@
 import os
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 APP_NAME = "FinFile Document Engine"
 APP_VERSION = "0.2.0"
@@ -11,6 +15,29 @@ MAX_SYNC_PARSE_BYTES = int(
 
 DEFAULT_OCR_LANGUAGE = os.getenv("DEFAULT_OCR_LANGUAGE", "en")
 DEFAULT_OCR_QUALITY_MODE = os.getenv("DEFAULT_OCR_QUALITY_MODE", "BALANCED")
+
+OCR_PROVIDER = os.getenv("OCR_PROVIDER", "local_paddle").strip().lower()
+print(f"[FinFile] OCR_PROVIDER={OCR_PROVIDER}")
+
+PADDLEOCR_API_URL = os.getenv(
+    "PADDLEOCR_API_URL",
+    "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs",
+)
+
+PADDLEOCR_API_MODEL = os.getenv(
+    "PADDLEOCR_API_MODEL",
+    "PaddleOCR-VL-1.6",
+)
+
+PADDLEOCR_API_TOKEN = os.getenv("PADDLEOCR_API_TOKEN", "")
+
+PADDLEOCR_API_POLL_INTERVAL_SECONDS = float(
+    os.getenv("PADDLEOCR_API_POLL_INTERVAL_SECONDS", "3")
+)
+
+PADDLEOCR_API_TIMEOUT_SECONDS = int(
+    os.getenv("PADDLEOCR_API_TIMEOUT_SECONDS", "300")
+)
 
 
 class OcrQualityMode:

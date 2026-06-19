@@ -11,6 +11,8 @@ from app.normalizers.parser_output import create_parser_output
 from app.parsers.base import BaseParser
 from app.preprocessors.pdf_renderer import render_pdf_pages_to_images
 
+from app.providers.provider_factory import get_document_parse_provider
+
 
 SUPPORTED_IMAGE_MIME_TYPES = {
     "image/png": ".png",
@@ -47,6 +49,75 @@ class DocumentParseParser(BaseParser):
 
         language = payload.get("language") or DEFAULT_OCR_LANGUAGE
         quality_mode = payload.get("qualityMode") or DEFAULT_OCR_QUALITY_MODE
+
+        provider = get_document_parse_provider()
+
+        if provider:
+            api_start_time = time.perf_counter()
+
+            api_result = provider.parse_document(
+                {
+                    "originalName": file_payload.get("originalName"),
+                    "mimeType": mime_type,
+                    "sizeBytes": file_payload.get("sizeBytes"),
+                    "bytes": file_bytes,
+                }
+            )
+
+            normalized_outputs = api_result["outputs"]
+            page_count = api_result.get(
+                "pageCount") or normalized_outputs.get("pageCount") or 1
+
+            return create_parser_output(
+                job_id=payload.get("jobId") or "sync_document_parse",
+                parser_mode=self.parser_mode,
+                status=JobStatus.COMPLETED,
+                document={
+                    "originalName": file_payload.get("originalName"),
+                    "mimeType": mime_type,
+                    "sizeBytes": file_payload.get("sizeBytes"),
+                    "pageCount": page_count,
+                    "isScanned": True,
+                    "sourceType": "document_parse",
+                    "textBlockCount": len(
+                        [
+                            block
+                            for block in normalized_outputs.get("documentBlocks", [])
+                            if block.get("type") == "text"
+                        ]
+                    ),
+                    "tableCount": len(normalized_outputs.get("tables") or []),
+                },
+                outputs={
+                    "textBlocks": [],
+                    "plainText": normalized_outputs["plainText"],
+                    "structuredContent": normalized_outputs["structuredContent"],
+                    "documentBlocks": normalized_outputs["documentBlocks"],
+                    "tables": normalized_outputs["tables"],
+                    "markdown": normalized_outputs["markdown"],
+                    "json": normalized_outputs["json"],
+                },
+                confidence={
+                    "overall": None,
+                    "text": None,
+                    "tables": None,
+                },
+                warnings=[] if normalized_outputs.get("tables") else [
+                    "No structured tables were detected."
+                ],
+                engine={
+                    **api_result["engine"],
+                    "parser": self.parser_mode,
+                    "qualityMode": quality_mode,
+                    "language": language,
+                    "loadedModels": [],
+                },
+                performance={
+                    **api_result["performance"],
+                    "totalMs": get_elapsed_ms(api_start_time),
+                    "pagesProcessed": page_count,
+                },
+            )
 
         model_name = model_registry.get_document_parse_model_name(
             language=language,
