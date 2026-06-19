@@ -211,25 +211,6 @@ def sanitize_table_html(table_html):
             "wasTrimmed": True,
         }
 
-    if quality["isSuspicious"]:
-        safe_text = truncate_safely(table_text, min(
-            len(table_text), MAX_TABLE_TEXT_CHARS))
-
-        fallback_html = (
-            "<table border='1' style='margin: auto; word-wrap: break-word;'>"
-            "<tr><td>"
-            + html.escape(safe_text).replace("\n", "<br />")
-            + "</td></tr></table>"
-        )
-
-        return {
-            "html": fallback_html,
-            "text": safe_text,
-            "warnings": warnings,
-            "quality": quality,
-            "wasTrimmed": False,
-        }
-
     return {
         "html": original_html,
         "text": table_text,
