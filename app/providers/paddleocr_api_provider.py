@@ -144,6 +144,7 @@ class PaddleOcrApiProvider:
             "jobId": job_id,
             "outputs": normalized,
             "pageCount": normalized.get("pageCount") or 1,
+            "warnings": normalized.get("warnings") or [],
             "engine": {
                 "provider": self.provider_name,
                 "modelName": self.model,

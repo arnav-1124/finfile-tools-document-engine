@@ -102,9 +102,18 @@ class DocumentParseParser(BaseParser):
                     "text": None,
                     "tables": None,
                 },
-                warnings=[] if normalized_outputs.get("tables") else [
+                warnings=[
+                    warning.get("message", str(warning))
+                    if isinstance(warning, dict)
+                    else str(warning)
+                    for warning in (
+                        api_result.get("warnings")
+                        or normalized_outputs.get("warnings")
+                        or []
+                    )
+                ] or ([] if normalized_outputs.get("tables") else [
                     "No structured tables were detected."
-                ],
+                ]),
                 engine={
                     **api_result["engine"],
                     "parser": self.parser_mode,
