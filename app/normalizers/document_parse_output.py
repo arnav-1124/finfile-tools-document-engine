@@ -16,7 +16,6 @@ def safe_jsonable(value):
     if isinstance(value, float):
         if math.isnan(value) or math.isinf(value):
             return None
-
         return value
 
     if isinstance(value, str):
@@ -28,14 +27,12 @@ def safe_jsonable(value):
     if isinstance(value, bytes):
         return value.decode("utf-8", errors="ignore")
 
-    # NumPy arrays
     if hasattr(value, "tolist"):
         try:
             return safe_jsonable(value.tolist())
         except Exception:
             return str(value)
 
-    # NumPy scalar values: np.int16, np.int64, np.float32, etc.
     if hasattr(value, "item"):
         try:
             return safe_jsonable(value.item())
@@ -43,18 +40,11 @@ def safe_jsonable(value):
             return str(value)
 
     if isinstance(value, dict):
-        safe_dict = {}
-
-        for key, item in value.items():
-            safe_key = str(safe_jsonable(key))
-            safe_dict[safe_key] = safe_jsonable(item)
-
-        return safe_dict
+        return {str(safe_jsonable(key)): safe_jsonable(item) for key, item in value.items()}
 
     if isinstance(value, (list, tuple, set)):
         return [safe_jsonable(item) for item in value]
 
-    # PaddleOCR/PaddleX result objects sometimes expose useful dict methods.
     if hasattr(value, "dict"):
         try:
             return safe_jsonable(value.dict())
@@ -80,6 +70,26 @@ def safe_jsonable(value):
         return str(value)
 
 
+def extract_html_from_result_item(item):
+    if not isinstance(item, dict):
+        return ""
+
+    for key in [
+        "html",
+        "table_html",
+        "pred_html",
+        "rec_html",
+        "table_html_pred",
+        "content",
+    ]:
+        value = item.get(key)
+
+        if isinstance(value, str) and "<table" in value.lower():
+            return value.strip()
+
+    return ""
+
+
 def extract_markdown_from_result_item(item):
     if not isinstance(item, dict):
         return ""
@@ -99,49 +109,67 @@ def extract_markdown_from_result_item(item):
     return ""
 
 
-def extract_html_from_result_item(item):
-    if not isinstance(item, dict):
-        return ""
-
-    for key in [
-        "html",
-        "table_html",
-        "pred_html",
-        "rec_html",
-        "table_html_pred",
-    ]:
-        value = item.get(key)
-
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-
-    return ""
-
-
 def extract_text_from_result_item(item):
     if not isinstance(item, dict):
         return ""
 
-    for key in [
-        "text",
-        "content",
-        "rec_text",
-        "ocr_text",
-        "table_text",
-    ]:
+    for key in ["text", "content", "rec_text", "ocr_text", "table_text"]:
         value = item.get(key)
 
         if isinstance(value, str) and value.strip():
             return value.strip()
 
     return ""
+
+
+def get_bbox_from_item(item):
+    if not isinstance(item, dict):
+        return None
+
+    return safe_jsonable(
+        item.get("bbox")
+        or item.get("box")
+        or item.get("poly")
+        or item.get("coordinate")
+    )
+
+
+def get_page_number_from_item(item, fallback_page_number=1):
+    if not isinstance(item, dict):
+        return fallback_page_number
+
+    return (
+        item.get("pageNumber")
+        or item.get("page_number")
+        or item.get("page_id")
+        or fallback_page_number
+    )
+
+
+def is_table_layout_only(item):
+    if not isinstance(item, dict):
+        return False
+
+    label = str(
+        item.get("label")
+        or item.get("type")
+        or item.get("category")
+        or item.get("block_type")
+        or item.get("layout_type")
+        or ""
+    ).lower()
+
+    has_table_label = "table" in label
+    has_html = bool(extract_html_from_result_item(item))
+
+    return has_table_label and not has_html
 
 
 def is_table_like_item(item):
     if not isinstance(item, dict):
         return False
 
-    candidate_type = str(
+    label = str(
         item.get("type")
         or item.get("label")
         or item.get("category")
@@ -151,49 +179,47 @@ def is_table_like_item(item):
         or ""
     ).lower()
 
-    if "table" in candidate_type:
+    if "table" in label:
         return True
 
     if extract_html_from_result_item(item):
         return True
 
     markdown = extract_markdown_from_result_item(item)
-
     if markdown and "|" in markdown:
         return True
 
-    table_keys = {
-        "table",
-        "tables",
-        "table_res",
-        "table_result",
-        "table_structure",
-        "cell_box_list",
-        "table_cells",
-        "pred_html",
-        "rec_html",
-    }
+    return any(
+        key in item
+        for key in [
+            "table",
+            "tables",
+            "table_res",
+            "table_result",
+            "table_structure",
+            "cell_box_list",
+            "table_cells",
+            "pred_html",
+            "rec_html",
+        ]
+    )
 
-    return any(key in item for key in table_keys)
 
-
-def find_tables_in_value(value, page_number=1, tables=None):
-    if tables is None:
-        tables = []
+def collect_table_candidates(value, page_number=1, candidates=None):
+    if candidates is None:
+        candidates = []
 
     if isinstance(value, dict):
-        current_page_number = (
-            value.get("pageNumber")
-            or value.get("page_number")
-            or value.get("page_id")
-            or page_number
-        )
+        current_page_number = get_page_number_from_item(value, page_number)
 
         if is_table_like_item(value):
-            tables.append(
+            html = extract_html_from_result_item(value)
+            markdown = extract_markdown_from_result_item(value)
+            text = extract_text_from_result_item(value)
+
+            candidates.append(
                 {
                     "pageNumber": current_page_number,
-                    "tableIndex": len(tables) + 1,
                     "type": str(
                         value.get("type")
                         or value.get("label")
@@ -202,31 +228,88 @@ def find_tables_in_value(value, page_number=1, tables=None):
                         or value.get("layout_type")
                         or "table"
                     ),
-                    "html": extract_html_from_result_item(value),
-                    "markdown": extract_markdown_from_result_item(value),
-                    "text": extract_text_from_result_item(value),
-                    "bbox": safe_jsonable(
-                        value.get("bbox")
-                        or value.get("box")
-                        or value.get("poly")
-                        or value.get("coordinate")
-                    ),
-                    "raw": None,
+                    "html": html,
+                    "markdown": markdown,
+                    "text": text if not html else "",
+                    "bbox": get_bbox_from_item(value),
+                    "hasHtml": bool(html),
+                    "isLayoutOnly": is_table_layout_only(value),
                 }
             )
 
         for item in value.values():
-            find_tables_in_value(
+            collect_table_candidates(
                 item,
                 page_number=current_page_number,
-                tables=tables,
+                candidates=candidates,
             )
 
     elif isinstance(value, list):
         for item in value:
-            find_tables_in_value(item, page_number=page_number, tables=tables)
+            collect_table_candidates(
+                item, page_number=page_number, candidates=candidates)
 
-    return tables
+    return candidates
+
+
+def normalize_html_signature(html):
+    return " ".join(str(html or "").lower().split())
+
+
+def dedupe_tables(candidates):
+    deduped = []
+    seen_html = set()
+    seen_bbox = set()
+
+    html_candidates = [item for item in candidates if item.get("hasHtml")]
+
+    for item in html_candidates:
+        html_signature = normalize_html_signature(item.get("html"))
+
+        if html_signature and html_signature in seen_html:
+            continue
+
+        if html_signature:
+            seen_html.add(html_signature)
+
+        deduped.append(item)
+
+    if deduped:
+        return [
+            {
+                "pageNumber": item["pageNumber"],
+                "tableIndex": index + 1,
+                "type": "table",
+                "html": item.get("html") or "",
+                "markdown": item.get("markdown") or "",
+                "text": item.get("text") or "",
+                "bbox": item.get("bbox"),
+            }
+            for index, item in enumerate(deduped)
+        ]
+
+    for item in candidates:
+        if item.get("isLayoutOnly"):
+            bbox_signature = json.dumps(item.get("bbox"), sort_keys=True)
+
+            if bbox_signature in seen_bbox:
+                continue
+
+            seen_bbox.add(bbox_signature)
+            deduped.append(item)
+
+    return [
+        {
+            "pageNumber": item["pageNumber"],
+            "tableIndex": index + 1,
+            "type": "table",
+            "html": item.get("html") or "",
+            "markdown": item.get("markdown") or "",
+            "text": item.get("text") or "",
+            "bbox": item.get("bbox"),
+        }
+        for index, item in enumerate(deduped)
+    ]
 
 
 def flatten_text_from_value(value, text_parts=None):
@@ -236,12 +319,12 @@ def flatten_text_from_value(value, text_parts=None):
     if isinstance(value, dict):
         text = extract_text_from_result_item(value)
 
-        if text:
+        if text and "<table" not in text.lower():
             text_parts.append(text)
 
         markdown = extract_markdown_from_result_item(value)
 
-        if markdown:
+        if markdown and "<table" not in markdown.lower():
             text_parts.append(markdown)
 
         for item in value.values():
@@ -276,24 +359,22 @@ def dedupe_strings(items):
 def normalize_document_parse_result(raw_result):
     json_result = safe_jsonable(raw_result)
 
-    tables = find_tables_in_value(json_result)
+    table_candidates = collect_table_candidates(json_result)
+    tables = dedupe_tables(table_candidates)
 
-    markdown_parts = dedupe_strings(flatten_text_from_value(json_result))
-    table_markdown_parts = [
-        table.get("markdown")
+    text_parts = dedupe_strings(flatten_text_from_value(json_result))
+
+    table_html_parts = [
+        table["html"]
         for table in tables
-        if table.get("markdown")
+        if table.get("html")
     ]
 
-    combined_markdown_parts = dedupe_strings(
-        markdown_parts + table_markdown_parts
-    )
-
-    markdown = "\n\n".join(combined_markdown_parts).strip()
-    plain_text = markdown
+    markdown = "\n\n".join(dedupe_strings(
+        text_parts + table_html_parts)).strip()
 
     return {
-        "plainText": plain_text,
+        "plainText": "\n\n".join(text_parts).strip(),
         "markdown": markdown,
         "tables": tables,
         "json": {
