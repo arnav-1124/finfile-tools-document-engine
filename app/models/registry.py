@@ -1,5 +1,10 @@
-from app.core.config import DEFAULT_OCR_LANGUAGE, DEFAULT_OCR_QUALITY_MODE, normalize_ocr_quality_mode
+from app.core.config import (
+    DEFAULT_OCR_LANGUAGE,
+    DEFAULT_OCR_QUALITY_MODE,
+    normalize_ocr_quality_mode,
+)
 from app.models.paddle_ocr import PaddleOcrModel
+from app.models.pp_structure_v3 import PPStructureV3Model
 
 
 class ParserMode:
@@ -30,11 +35,19 @@ class ModelRegistry:
     def get_model(self, model_name):
         return self._models.get(model_name)
 
-    def get_paddle_ocr_model_name(self, language=DEFAULT_OCR_LANGUAGE, quality_mode=DEFAULT_OCR_QUALITY_MODE):
+    def get_paddle_ocr_model_name(
+        self,
+        language=DEFAULT_OCR_LANGUAGE,
+        quality_mode=DEFAULT_OCR_QUALITY_MODE,
+    ):
         normalized_quality_mode = normalize_ocr_quality_mode(quality_mode)
         return f"paddle_ocr_text_{language}_{normalized_quality_mode.lower()}"
 
-    def get_paddle_ocr_model(self, language=DEFAULT_OCR_LANGUAGE, quality_mode=DEFAULT_OCR_QUALITY_MODE):
+    def get_paddle_ocr_model(
+        self,
+        language=DEFAULT_OCR_LANGUAGE,
+        quality_mode=DEFAULT_OCR_QUALITY_MODE,
+    ):
         normalized_quality_mode = normalize_ocr_quality_mode(quality_mode)
         model_name = self.get_paddle_ocr_model_name(
             language=language,
@@ -54,6 +67,38 @@ class ModelRegistry:
 
         return self.register_model(model_name, model)
 
+    def get_document_parse_model_name(
+        self,
+        language=DEFAULT_OCR_LANGUAGE,
+        quality_mode=DEFAULT_OCR_QUALITY_MODE,
+    ):
+        normalized_quality_mode = normalize_ocr_quality_mode(quality_mode)
+        return f"pp_structure_v3_{language}_{normalized_quality_mode.lower()}"
+
+    def get_document_parse_model(
+        self,
+        language=DEFAULT_OCR_LANGUAGE,
+        quality_mode=DEFAULT_OCR_QUALITY_MODE,
+    ):
+        normalized_quality_mode = normalize_ocr_quality_mode(quality_mode)
+        model_name = self.get_document_parse_model_name(
+            language=language,
+            quality_mode=normalized_quality_mode,
+        )
+
+        existing_model = self.get_model(model_name)
+
+        if existing_model:
+            return existing_model
+
+        model = PPStructureV3Model(
+            language=language,
+            quality_mode=normalized_quality_mode,
+        )
+        model.load()
+
+        return self.register_model(model_name, model)
+
     def get_status(self):
         return {
             "success": True,
@@ -61,7 +106,11 @@ class ModelRegistry:
             "loadedModels": self.get_loaded_models(),
         }
 
-    def warmup_paddle_ocr(self, language=DEFAULT_OCR_LANGUAGE, quality_mode=DEFAULT_OCR_QUALITY_MODE):
+    def warmup_paddle_ocr(
+        self,
+        language=DEFAULT_OCR_LANGUAGE,
+        quality_mode=DEFAULT_OCR_QUALITY_MODE,
+    ):
         normalized_quality_mode = normalize_ocr_quality_mode(quality_mode)
         model_name = self.get_paddle_ocr_model_name(
             language=language,
@@ -86,7 +135,47 @@ class ModelRegistry:
             "modelCount": self.get_model_count(),
         }
 
-    def warmup(self, language=DEFAULT_OCR_LANGUAGE, quality_mode=DEFAULT_OCR_QUALITY_MODE):
+    def warmup_document_parse(
+        self,
+        language=DEFAULT_OCR_LANGUAGE,
+        quality_mode=DEFAULT_OCR_QUALITY_MODE,
+    ):
+        normalized_quality_mode = normalize_ocr_quality_mode(quality_mode)
+        model_name = self.get_document_parse_model_name(
+            language=language,
+            quality_mode=normalized_quality_mode,
+        )
+        was_loaded = self.is_model_loaded(model_name)
+
+        self.get_document_parse_model(
+            language=language,
+            quality_mode=normalized_quality_mode,
+        )
+
+        return {
+            "success": True,
+            "message": "PPStructureV3 document parser is ready.",
+            "provider": "paddleocr",
+            "modelName": model_name,
+            "language": language,
+            "qualityMode": normalized_quality_mode,
+            "modelStatus": "warm" if was_loaded else "cold_start_loaded",
+            "loadedModels": self.get_loaded_models(),
+            "modelCount": self.get_model_count(),
+        }
+
+    def warmup(
+        self,
+        language=DEFAULT_OCR_LANGUAGE,
+        quality_mode=DEFAULT_OCR_QUALITY_MODE,
+        parser_mode=ParserMode.OCR_TEXT,
+    ):
+        if parser_mode == ParserMode.DOCUMENT_PARSE:
+            return self.warmup_document_parse(
+                language=language,
+                quality_mode=quality_mode,
+            )
+
         return self.warmup_paddle_ocr(
             language=language,
             quality_mode=quality_mode,
