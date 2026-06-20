@@ -109,24 +109,26 @@ def split_markdown_into_blocks(markdown_text, page_number, table_index_offset=0)
                 }
             )
 
-    table_index += 1
-    table_html = match.group(0).strip()
-    table_data = create_table_block(table_html)
+        table_index += 1
+        table_html = match.group(0).strip()
+        table_data = create_table_block(table_html)
 
-    blocks.append(
-        {
-            "type": "table",
-            "pageNumber": page_number,
-            "tableIndex": table_index,
-            "html": table_data["html"],
-            "markdown": table_data["html"],
-            "text": table_data["text"],
-            "bbox": None,
-            "warnings": [],
-        }
-    )
+        blocks.append(
+            {
+                "type": "table",
+                "pageNumber": page_number,
+                "tableIndex": table_index,
+                "html": table_data["html"],
+                "markdown": table_data["html"],
+                "text": table_data["text"],
+                "bbox": None,
+                "warnings": [],
+            }
+        )
 
-    cursor = match.end()
+        cursor = match.end()
+
+    cursor = max(cursor, 0)
 
     after = clean_text(markdown_text[cursor:])
 
