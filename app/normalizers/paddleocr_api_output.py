@@ -11,12 +11,6 @@ TABLE_REGEX = re.compile(
 
 TAG_REGEX = re.compile(r"<[^>]+>")
 
-MAX_TEXT_BLOCK_CHARS = 12000
-MAX_TABLE_TEXT_CHARS = 18000
-MAX_PLAIN_TEXT_CHARS = 60000
-REPETITION_RATIO_THRESHOLD = 0.42
-REPEATED_PHRASE_MIN_COUNT = 8
-
 
 def clean_text(value):
     text = str(value or "").replace("\r\n", "\n").replace("\r", "\n")
@@ -50,173 +44,22 @@ def parse_jsonl_lines(jsonl_text):
     return parsed_items
 
 
-def get_word_tokens(text):
-    return re.findall(r"[A-Za-z0-9][A-Za-z0-9'\-]*", str(text or "").lower())
-
-
-def get_repetition_score(text):
-    tokens = get_word_tokens(text)
-
-    if len(tokens) < 80:
-        return 0
-
-    token_counts = Counter(tokens)
-    repeated_token_total = sum(
-        count for count in token_counts.values() if count >= 8
-    )
-
-    return repeated_token_total / max(len(tokens), 1)
-
-
-def find_repeated_phrases(text, phrase_size=6):
-    tokens = get_word_tokens(text)
-
-    if len(tokens) < phrase_size * 4:
-        return []
-
-    phrases = [
-        " ".join(tokens[index: index + phrase_size])
-        for index in range(0, len(tokens) - phrase_size + 1)
-    ]
-
-    phrase_counts = Counter(phrases)
-
-    return [
-        {
-            "phrase": phrase,
-            "count": count,
-        }
-        for phrase, count in phrase_counts.most_common(5)
-        if count >= REPEATED_PHRASE_MIN_COUNT
-    ]
-
-
-def looks_hallucinated_or_repeated(text):
-    normalized = normalize_spaces(text)
-
-    if not normalized:
-        return {
-            "isSuspicious": False,
-            "reason": None,
-            "repetitionScore": 0,
-            "repeatedPhrases": [],
-        }
-
-    repetition_score = get_repetition_score(normalized)
-    repeated_phrases = find_repeated_phrases(normalized)
-
-    has_common_loop = bool(
-        re.search(
-            r"(size and size|provided to the company|the product are not provided|and the size)",
-            normalized,
-            flags=re.IGNORECASE,
-        )
-    )
-
-    is_suspicious = (
-        repetition_score >= REPETITION_RATIO_THRESHOLD
-        or bool(repeated_phrases)
-        or has_common_loop
-    )
-
-    reason = None
-
-    if is_suspicious:
-        if has_common_loop:
-            reason = "Repeated OCR/model-generated phrase pattern detected."
-        elif repeated_phrases:
-            reason = "Repeated phrase loop detected."
-        else:
-            reason = "Unusually high repeated-word ratio detected."
-
-    return {
-        "isSuspicious": is_suspicious,
-        "reason": reason,
-        "repetitionScore": round(repetition_score, 4),
-        "repeatedPhrases": repeated_phrases,
-    }
-
-
-def truncate_safely(text, max_chars):
-    value = str(text or "")
-
-    if len(value) <= max_chars:
-        return value
-
-    truncated = value[:max_chars].rstrip()
-
-    last_break = max(
-        truncated.rfind("\n\n"),
-        truncated.rfind(". "),
-        truncated.rfind("</tr>"),
-    )
-
-    if last_break > max_chars * 0.55:
-        truncated = truncated[:last_break].rstrip()
-
-    return truncated + "\n\n[Output trimmed because OCR returned an unusually long repeated block.]"
-
-
-def sanitize_block_text(text, max_chars):
-    value = clean_text(text)
-    quality = looks_hallucinated_or_repeated(value)
-
-    warnings = []
-
-    if quality["isSuspicious"]:
-        warnings.append(quality["reason"])
-
-    if len(value) > max_chars:
-        warnings.append(
-            f"Block was trimmed from {len(value)} to {max_chars} characters."
-        )
-        value = truncate_safely(value, max_chars)
+def create_text_block(text):
+    value = strip_html(clean_text(text))
 
     return {
         "text": value,
-        "warnings": [warning for warning in warnings if warning],
-        "quality": quality,
+        "warnings": [],
     }
 
 
-def sanitize_table_html(table_html):
-    original_html = str(table_html or "").strip()
-    table_text = strip_html(original_html)
-
-    quality = looks_hallucinated_or_repeated(table_text)
-    warnings = []
-
-    if quality["isSuspicious"]:
-        warnings.append(quality["reason"])
-
-    if len(table_text) > MAX_TABLE_TEXT_CHARS:
-        warnings.append(
-            f"Table text was unusually large and was trimmed from {len(table_text)} characters."
-        )
-
-        safe_text = truncate_safely(table_text, MAX_TABLE_TEXT_CHARS)
-
-        fallback_html = (
-            "<table border='1' style='margin: auto; word-wrap: break-word;'>"
-            "<tr><td>"
-            + html.escape(safe_text).replace("\n", "<br />")
-            + "</td></tr></table>"
-        )
-
-        return {
-            "html": fallback_html,
-            "text": safe_text,
-            "warnings": warnings,
-            "quality": quality,
-            "wasTrimmed": True,
-        }
+def create_table_block(table_html):
+    html_value = str(table_html or "").strip()
 
     return {
-        "html": original_html,
-        "text": table_text,
-        "warnings": warnings,
-        "quality": quality,
-        "wasTrimmed": False,
+        "html": html_value,
+        "text": strip_html(html_value),
+        "warnings": [],
     }
 
 
@@ -225,20 +68,18 @@ def extract_tables_from_markdown(markdown_text, page_number):
 
     for match in TABLE_REGEX.finditer(markdown_text or ""):
         table_html = match.group(0).strip()
-        sanitized = sanitize_table_html(table_html)
+        table_data = create_table_block(table_html)
 
         tables.append(
             {
                 "pageNumber": page_number,
                 "tableIndex": len(tables) + 1,
                 "type": "table",
-                "html": sanitized["html"],
-                "markdown": sanitized["html"],
-                "text": sanitized["text"],
+                "html": table_data["html"],
+                "markdown": table_data["html"],
+                "text": table_data["text"],
                 "bbox": None,
-                "warnings": sanitized["warnings"],
-                "quality": sanitized["quality"],
-                "wasTrimmed": sanitized["wasTrimmed"],
+                "warnings": [],
             }
         )
 
@@ -255,56 +96,52 @@ def split_markdown_into_blocks(markdown_text, page_number, table_index_offset=0)
 
         if before:
             clean_before = strip_html(before)
-            sanitized = sanitize_block_text(clean_before, MAX_TEXT_BLOCK_CHARS)
+            block_data = create_text_block(clean_before)
 
             blocks.append(
                 {
                     "type": "text",
                     "pageNumber": page_number,
-                    "text": sanitized["text"],
-                    "markdown": sanitized["text"],
+                    "text": block_data["text"],
+                    "markdown": block_data["text"],
                     "bbox": None,
-                    "warnings": sanitized["warnings"],
-                    "quality": sanitized["quality"],
+                    "warnings": [],
                 }
             )
 
-        table_index += 1
-        table_html = match.group(0).strip()
-        sanitized_table = sanitize_table_html(table_html)
+    table_index += 1
+    table_html = match.group(0).strip()
+    table_data = create_table_block(table_html)
 
-        blocks.append(
-            {
-                "type": "table",
-                "pageNumber": page_number,
-                "tableIndex": table_index,
-                "html": sanitized_table["html"],
-                "markdown": sanitized_table["html"],
-                "text": sanitized_table["text"],
-                "bbox": None,
-                "warnings": sanitized_table["warnings"],
-                "quality": sanitized_table["quality"],
-                "wasTrimmed": sanitized_table["wasTrimmed"],
-            }
-        )
+    blocks.append(
+        {
+            "type": "table",
+            "pageNumber": page_number,
+            "tableIndex": table_index,
+            "html": table_data["html"],
+            "markdown": table_data["html"],
+            "text": table_data["text"],
+            "bbox": None,
+            "warnings": [],
+        }
+    )
 
-        cursor = match.end()
+    cursor = match.end()
 
     after = clean_text(markdown_text[cursor:])
 
     if after:
         clean_after = strip_html(after)
-        sanitized = sanitize_block_text(clean_after, MAX_TEXT_BLOCK_CHARS)
+        block_data = create_text_block(clean_after)
 
         blocks.append(
             {
                 "type": "text",
                 "pageNumber": page_number,
-                "text": sanitized["text"],
-                "markdown": sanitized["text"],
+                "text": block_data["text"],
+                "markdown": block_data["text"],
                 "bbox": None,
-                "warnings": sanitized["warnings"],
-                "quality": sanitized["quality"],
+                "warnings": [],
             }
         )
 
@@ -459,18 +296,6 @@ def normalize_paddleocr_api_jsonl(jsonl_text):
     markdown = build_markdown(normalized_blocks)
     warnings = collect_warnings(normalized_blocks, pages)
 
-    suspicious_blocks = [
-        {
-            "pageNumber": block.get("pageNumber"),
-            "type": block.get("type"),
-            "tableIndex": block.get("tableIndex"),
-            "reason": (block.get("quality") or {}).get("reason"),
-            "textLength": len(block.get("text") or ""),
-        }
-        for block in normalized_blocks
-        if (block.get("quality") or {}).get("isSuspicious")
-    ]
-
     return {
         "pageCount": page_number,
         "plainText": plain_text,
@@ -492,8 +317,6 @@ def normalize_paddleocr_api_jsonl(jsonl_text):
                 ]
             ),
             "warningCount": len(warnings),
-            "suspiciousBlockCount": len(suspicious_blocks),
-            "suspiciousBlocks": suspicious_blocks,
             "provider": "paddleocr_api",
             "rawPreviewOnly": True,
             "rawPreviewDisabled": True,
