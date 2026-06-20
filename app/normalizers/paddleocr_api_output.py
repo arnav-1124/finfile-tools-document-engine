@@ -1,7 +1,6 @@
 import html
 import json
 import re
-from collections import Counter
 
 
 TABLE_REGEX = re.compile(
