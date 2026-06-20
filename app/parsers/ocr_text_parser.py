@@ -178,6 +178,26 @@ class OcrTextParser(BaseParser):
         if not files:
             raise ValueError("At least one file is required for OCR parsing.")
 
+            from app.core.config import use_paddleocr_api
+
+        if use_paddleocr_api():
+            from app.parsers.document_parse_parser import DocumentParseParser
+
+            document_result = DocumentParseParser().parse(
+                {
+                    **payload,
+                    "parserMode": "DOCUMENT_PARSE",
+                }
+            )
+
+            document_result["parserMode"] = self.parser_mode
+            document_result["selectedParser"] = "DOCUMENT_PARSE"
+            document_result["warnings"] = document_result.get("warnings", []) + [
+                "OCR text was processed through Document Layout because PaddleOCR API provider is enabled."
+            ]
+
+            return document_result
+
         file_payload = files[0]
         content_base64 = file_payload.get("contentBase64")
         mime_type = file_payload.get("mimeType")

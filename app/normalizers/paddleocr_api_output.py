@@ -336,56 +336,28 @@ def dedupe_tables(tables):
     return deduped
 
 
-def is_block_quarantined(block):
-    quality = block.get("quality") or {}
-
-    return bool(quality.get("isSuspicious")) and len(block.get("text") or "") > 4000
-
-
 def build_plain_text(blocks):
     parts = []
 
     for block in blocks:
-        if is_block_quarantined(block):
-            parts.append(
-                f"[Page {block.get('pageNumber')}: Suspicious repeated OCR block was hidden from plain text output.]"
-            )
-            continue
-
         text = block.get("text") or ""
 
         if text:
             parts.append(text)
 
-    plain_text = clean_text("\n\n".join(parts))
-
-    if len(plain_text) > MAX_PLAIN_TEXT_CHARS:
-        plain_text = truncate_safely(plain_text, MAX_PLAIN_TEXT_CHARS)
-
-    return plain_text
+    return clean_text("\n\n".join(parts))
 
 
 def build_markdown(blocks):
     parts = []
 
     for block in blocks:
-        if is_block_quarantined(block):
-            parts.append(
-                f"> Page {block.get('pageNumber')}: Suspicious repeated OCR block was hidden from Markdown output."
-            )
-            continue
-
         markdown = block.get("markdown") or block.get("text") or ""
 
         if markdown:
             parts.append(markdown)
 
-    markdown = clean_text("\n\n---\n\n".join(parts))
-
-    if len(markdown) > MAX_PLAIN_TEXT_CHARS:
-        markdown = truncate_safely(markdown, MAX_PLAIN_TEXT_CHARS)
-
-    return markdown
+    return clean_text("\n\n---\n\n".join(parts))
 
 
 def collect_warnings(blocks, pages):
@@ -487,7 +459,7 @@ def normalize_paddleocr_api_jsonl(jsonl_text):
     markdown = build_markdown(normalized_blocks)
     warnings = collect_warnings(normalized_blocks, pages)
 
-    quarantined_blocks = [
+    suspicious_blocks = [
         {
             "pageNumber": block.get("pageNumber"),
             "type": block.get("type"),
@@ -496,7 +468,7 @@ def normalize_paddleocr_api_jsonl(jsonl_text):
             "textLength": len(block.get("text") or ""),
         }
         for block in normalized_blocks
-        if is_block_quarantined(block)
+        if (block.get("quality") or {}).get("isSuspicious")
     ]
 
     return {
@@ -520,8 +492,8 @@ def normalize_paddleocr_api_jsonl(jsonl_text):
                 ]
             ),
             "warningCount": len(warnings),
-            "quarantinedBlockCount": len(quarantined_blocks),
-            "quarantinedBlocks": quarantined_blocks,
+            "suspiciousBlockCount": len(suspicious_blocks),
+            "suspiciousBlocks": suspicious_blocks,
             "provider": "paddleocr_api",
             "rawPreviewOnly": True,
             "rawPreviewDisabled": True,

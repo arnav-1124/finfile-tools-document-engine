@@ -1,8 +1,10 @@
 import os
 
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+BASE_DIR = Path(__file__).resolve().parents[2]
+load_dotenv(BASE_DIR / ".env")
 
 
 APP_NAME = "FinFile Document Engine"
@@ -17,7 +19,7 @@ DEFAULT_OCR_LANGUAGE = os.getenv("DEFAULT_OCR_LANGUAGE", "en")
 DEFAULT_OCR_QUALITY_MODE = os.getenv("DEFAULT_OCR_QUALITY_MODE", "BALANCED")
 
 OCR_PROVIDER = os.getenv("OCR_PROVIDER", "local_paddle").strip().lower()
-print(f"[FinFile] OCR_PROVIDER={OCR_PROVIDER}")
+print(f"[FinFile Config] OCR_PROVIDER={OCR_PROVIDER}")
 
 PADDLEOCR_API_URL = os.getenv(
     "PADDLEOCR_API_URL",
@@ -74,3 +76,6 @@ def normalize_ocr_quality_mode(value):
         return DEFAULT_OCR_QUALITY_MODE
 
     return quality_mode
+
+def use_paddleocr_api():
+    return OCR_PROVIDER == "paddle_api"

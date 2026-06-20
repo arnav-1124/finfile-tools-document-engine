@@ -1,3 +1,4 @@
+from app.core.config import use_paddleocr_api
 from app.parsers.base import BaseParser
 from app.parsers.fast_text_parser import FastTextParser
 from app.parsers.ocr_text_parser import OcrTextParser
@@ -16,6 +17,14 @@ FORM_TEMPLATE_KEYWORDS = [
     "from",
     "to",
 ]
+
+SUPPORTED_DOCUMENT_PARSE_MIME_TYPES = {
+    "application/pdf",
+    "image/png",
+    "image/jpeg",
+    "image/jpg",
+    "image/webp",
+}
 
 
 def get_plain_text(result):
@@ -76,6 +85,25 @@ def should_use_fast_text(fast_result):
     return True
 
 
+def parse_with_document_layout(payload, selected_by_auto_message):
+    from app.parsers.document_parse_parser import DocumentParseParser
+
+    document_result = DocumentParseParser().parse(
+        {
+            **payload,
+            "parserMode": "DOCUMENT_PARSE",
+        }
+    )
+
+    document_result["parserMode"] = "AUTO"
+    document_result["selectedParser"] = "DOCUMENT_PARSE"
+    document_result["warnings"] = document_result.get("warnings", []) + [
+        selected_by_auto_message
+    ]
+
+    return document_result
+
+
 class AutoParser(BaseParser):
     parser_mode = "AUTO"
 
@@ -87,6 +115,17 @@ class AutoParser(BaseParser):
 
         file_payload = files[0]
         mime_type = file_payload.get("mimeType")
+
+        if mime_type not in SUPPORTED_DOCUMENT_PARSE_MIME_TYPES:
+            raise ValueError(
+                "AUTO currently supports PDF, PNG, JPG, JPEG, and WebP files."
+            )
+
+        if use_paddleocr_api():
+            return parse_with_document_layout(
+                payload,
+                "AUTO used Document Layout because PaddleOCR API provider is enabled.",
+            )
 
         if mime_type in ["image/png", "image/jpeg", "image/jpg", "image/webp"]:
             ocr_result = OcrTextParser().parse(
