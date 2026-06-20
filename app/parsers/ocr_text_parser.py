@@ -10,6 +10,7 @@ from app.normalizers.text_blocks import create_text_block
 from app.parsers.base import BaseParser
 from app.preprocessors.pdf_renderer import render_pdf_pages_to_images
 from app.preprocessors.ocr_image_optimizer import optimize_image_for_ocr
+from app.core.config import use_paddleocr_api
 
 
 SUPPORTED_IMAGE_MIME_TYPES = {
@@ -178,8 +179,6 @@ class OcrTextParser(BaseParser):
         if not files:
             raise ValueError("At least one file is required for OCR parsing.")
 
-            from app.core.config import use_paddleocr_api
-
         if use_paddleocr_api():
             from app.parsers.document_parse_parser import DocumentParseParser
 
@@ -192,9 +191,6 @@ class OcrTextParser(BaseParser):
 
             document_result["parserMode"] = self.parser_mode
             document_result["selectedParser"] = "DOCUMENT_PARSE"
-            document_result["warnings"] = document_result.get("warnings", []) + [
-                "OCR text was processed through Document Layout because PaddleOCR API provider is enabled."
-            ]
 
             return document_result
 

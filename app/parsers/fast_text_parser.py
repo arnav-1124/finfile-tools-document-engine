@@ -3,6 +3,7 @@ import time
 
 import fitz
 
+from app.core.config import use_paddleocr_api
 from app.jobs.job_status import JobStatus
 from app.normalizers.parser_output import create_parser_output
 from app.normalizers.text_blocks import normalize_text_lines
@@ -23,6 +24,21 @@ class FastTextParser(BaseParser):
 
         if not files:
             raise ValueError("At least one file is required for parsing.")
+
+        if use_paddleocr_api():
+            from app.parsers.document_parse_parser import DocumentParseParser
+
+            document_result = DocumentParseParser().parse(
+                {
+                    **payload,
+                    "parserMode": "DOCUMENT_PARSE",
+                }
+            )
+
+            document_result["parserMode"] = self.parser_mode
+            document_result["selectedParser"] = "DOCUMENT_PARSE"
+
+            return document_result
 
         file_payload = files[0]
         content_base64 = file_payload.get("contentBase64")

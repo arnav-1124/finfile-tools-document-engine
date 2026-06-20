@@ -18,7 +18,7 @@ FORM_TEMPLATE_KEYWORDS = [
     "to",
 ]
 
-SUPPORTED_DOCUMENT_PARSE_MIME_TYPES = {
+SUPPORTED_DOCUMENT_MIME_TYPES = {
     "application/pdf",
     "image/png",
     "image/jpeg",
@@ -85,7 +85,7 @@ def should_use_fast_text(fast_result):
     return True
 
 
-def parse_with_document_layout(payload, selected_by_auto_message):
+def parse_with_document_layout(payload, parser_mode="AUTO"):
     from app.parsers.document_parse_parser import DocumentParseParser
 
     document_result = DocumentParseParser().parse(
@@ -95,11 +95,8 @@ def parse_with_document_layout(payload, selected_by_auto_message):
         }
     )
 
-    document_result["parserMode"] = "AUTO"
+    document_result["parserMode"] = parser_mode
     document_result["selectedParser"] = "DOCUMENT_PARSE"
-    document_result["warnings"] = document_result.get("warnings", []) + [
-        selected_by_auto_message
-    ]
 
     return document_result
 
@@ -116,16 +113,13 @@ class AutoParser(BaseParser):
         file_payload = files[0]
         mime_type = file_payload.get("mimeType")
 
-        if mime_type not in SUPPORTED_DOCUMENT_PARSE_MIME_TYPES:
+        if mime_type not in SUPPORTED_DOCUMENT_MIME_TYPES:
             raise ValueError(
                 "AUTO currently supports PDF, PNG, JPG, JPEG, and WebP files."
             )
 
         if use_paddleocr_api():
-            return parse_with_document_layout(
-                payload,
-                "AUTO used Document Layout because PaddleOCR API provider is enabled.",
-            )
+            return parse_with_document_layout(payload, parser_mode=self.parser_mode)
 
         if mime_type in ["image/png", "image/jpeg", "image/jpg", "image/webp"]:
             ocr_result = OcrTextParser().parse(
@@ -137,10 +131,6 @@ class AutoParser(BaseParser):
 
             ocr_result["parserMode"] = self.parser_mode
             ocr_result["selectedParser"] = "OCR_TEXT"
-            ocr_result["warnings"] = ocr_result.get("warnings", []) + [
-                "AUTO selected OCR_TEXT because image files require OCR."
-            ]
-
             return ocr_result
 
         if mime_type == "application/pdf":
@@ -154,9 +144,6 @@ class AutoParser(BaseParser):
             if should_use_fast_text(fast_result):
                 fast_result["parserMode"] = self.parser_mode
                 fast_result["selectedParser"] = "FAST_TEXT"
-                fast_result["warnings"] = fast_result.get("warnings", []) + [
-                    "AUTO selected FAST_TEXT because complete embedded PDF text was found."
-                ]
                 return fast_result
 
             ocr_result = OcrTextParser().parse(
@@ -168,9 +155,6 @@ class AutoParser(BaseParser):
 
             ocr_result["parserMode"] = self.parser_mode
             ocr_result["selectedParser"] = "OCR_TEXT"
-            ocr_result["warnings"] = ocr_result.get("warnings", []) + [
-                "AUTO selected OCR_TEXT because embedded PDF text was weak, sparse, or template-like."
-            ]
 
             return ocr_result
 

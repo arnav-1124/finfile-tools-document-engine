@@ -19,7 +19,6 @@ DEFAULT_OCR_LANGUAGE = os.getenv("DEFAULT_OCR_LANGUAGE", "en")
 DEFAULT_OCR_QUALITY_MODE = os.getenv("DEFAULT_OCR_QUALITY_MODE", "BALANCED")
 
 OCR_PROVIDER = os.getenv("OCR_PROVIDER", "local_paddle").strip().lower()
-print(f"[FinFile Config] OCR_PROVIDER={OCR_PROVIDER}")
 
 PADDLEOCR_API_URL = os.getenv(
     "PADDLEOCR_API_URL",
